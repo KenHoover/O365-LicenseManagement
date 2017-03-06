@@ -1,7 +1,7 @@
 ﻿# enable-O365ServicePlan.ps1
 #
 # by Ken Hoover <ken.hoover@yale.edu> for Yale University
-# July 2016
+# March 2017
 
 # Turns "on" the service plan listed in $targetServicePlan for $userPrincipalName if it's currently disabled.
 
@@ -20,7 +20,7 @@ write-verbose "Attempting to enable $targetServicePlan for $userprincipalname...
 
 # Retrieve the user obejct from AAD for the target user
 if ($userObject = get-msoluser -UserPrincipalName $userPrincipalName -ErrorAction SilentlyContinue) {
-    write-verbose "Retrieved AzureAD user object for $userPrincipalName"
+    write-verbose "Retrieved user object for $userPrincipalName"
 } else {
     write-warning "$userPrincipalName not found in AzureAD"
     exit
@@ -69,7 +69,8 @@ write-verbose "Building hash table of service plans and current statuses..."
 $plans = @{}
 $userObject.licenses.servicestatus | % { $plans.add($_.serviceplan.servicename, $_.provisioningstatus) }
 
-# Turn the target service plan "on" in the hash table by setting its value to "Success" instead of "Disabled".
+
+# Turn the target service plan "on" in the hash table by setting its value to "Success".
 # This doesn't do anything to the user (yet)...
 if ($plans.get_item($targetServicePlan) -eq "Disabled") 
 {
@@ -81,14 +82,12 @@ if ($plans.get_item($targetServicePlan) -eq "Disabled")
 }
 
 
-# Generate a new list of disabled plans to be used with the new-MsolLicenseOptions cmdlet by going thru the hash table and
+# Re-generate the list of disabled plans to be used with the new-MsolLicenseOptions cmdlet by going thru the hash table and
 # adding all plans which are set to "Disabled" to the $disabledPlans string
-$disabledPlans = ""
-$plans.Keys | % { if ($plans.get_item($_) -eq "Disabled") { $disabledPlans += ($_ + ",") } }
+$disabledPlans = @()  # this is a list (array of strings) variable
+$plans.Keys | % { if ($plans.get_item($_) -eq "Disabled") { $disabledPlans += $_ } }
 
-# lop off the trailing comma
-$disabledPlans = $disabledPlans.trimEnd(',')
-
+# Create the new licenseOptions object if there is anything to disable
 if ($disabledPlans) {
     write-verbose "Creating new msolLicenseOptions object for $userPrincipalName"
     $licenseOptions = new-msolLicenseOptions -AccountSkuId $baseLicense -DisabledPlans $disabledPlans -verbose
@@ -98,7 +97,16 @@ if ($disabledPlans) {
 }
 
 # Update the user's license to reflect the new set of enabled/disabled services
-get-msoluser -userprincipalname $userPrincipalName | set-msoluserLicense -LicenseOptions $licenseOptions
+get-msoluser -UserPrincipalName $userObject.userprincipalname | Set-MsolUserLicense -LicenseOptions $licenseOptions
+start-sleep -seconds 1
 
-write-host "Updated enabled services for $userPrincipalName ($baseLicense)" -fore Green
+# Verify that the provisioningStatus on the target service plan is no longer "Disabled".
+# Note that the status could be something like "PendingInput" so we will consider anything that's not "Disabled" as OK
+if (((get-msoluser -UserPrincipalName $userPrincipalName).licenses.servicestatus | where { $_.serviceplan.servicename.equals($targetServicePlan) }).provisioningstatus -ne "Disabled" )
+{
+    write-host "$targetServicePlan is no longer disabled for $userprincipalname." -ForegroundColor green
+} else {
+    write-warning "$targetServicePlan is still disabled for $userPrincipalName.  Something went wrong?"
+}
+
 # Done.

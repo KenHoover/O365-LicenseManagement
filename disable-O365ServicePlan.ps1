@@ -1,7 +1,7 @@
 ﻿# disable-O365serviceplan.ps1
 #
 # by Ken Hoover <ken.hoover@yale.edu> for Yale University
-# July 2016
+# March 2017
 
 # Turns "off" the service plan listed in $targetServicePlan for $userPrincipalName if it's currently enabled.
 
@@ -22,7 +22,7 @@ write-verbose "Attempting to disable $targetServicePlan for $userprincipalname..
 
 # Retrieve the user object from AAD for the target user
 if ($userObject = get-msoluser -UserPrincipalName $userPrincipalName -ErrorAction SilentlyContinue) {
-    write-verbose "Retrieved AzureAD user object for $userPrincipalName"
+    write-verbose "Retrieved user object for $userPrincipalName"
 } else {
     write-warning "$userPrincipalName not found in AzureAD"
     exit
@@ -30,7 +30,7 @@ if ($userObject = get-msoluser -UserPrincipalName $userPrincipalName -ErrorActio
 
 # Verify that the user currently has a license
 if ($userObject.islicensed -eq $false) {
-    write-warning "$userPrincipalName must have a license assigned before this script can be used."
+    write-warning "$userPrincipalName does not have a license.  A license must be present before this script can be used."
     exit
 } else {
     write-verbose "Confirmed that $userPrincipalName is licensed."
@@ -44,7 +44,7 @@ if ($userObject.licenses.count -gt 1) {
     write-verbose "Confirmed that $userprincipalname only has one license assigned."
 }
 
-$baseLicense = $userObject.licenses.accountSkuId  # the user's "base" license
+$baseLicense = $userObject.licenses[0].accountSkuId  # the user's "base" license
 
 # Confirm that the service plan we're targeting is covered by the user's current license
 if ($userObject.licenses.servicestatus | where { $_.serviceplan.servicename.equals($targetServicePlan) })
@@ -60,33 +60,30 @@ if (($userObject.licenses.servicestatus | where { $_.serviceplan.servicename.equ
 {
     write-verbose "Confirmed that $userprincipalname has $targetServicePlan enabled."
 } else {
-    write-warning "$targetServicePlan is already disabled for $userPrincipalName."
+    write-warning "$targetServicePlan is not enabled for $userPrincipalName."
     exit
 }
 
 # Now that we've finished checking  things we can get to work.
 
 # Build a hashtable with the service plan names and statuses for this person's license
-write-verbose "Building hash table of service plans and current statuses..."
+write-verbose "Building table of service plans and current statuses..."
 $plans = @{}
 $userObject.licenses.servicestatus | % { $plans.add($_.serviceplan.servicename, $_.provisioningstatus) }
 
 # Turn the target service plan "off" in the hash table by setting its value to "Disabled" instead of "Success".
-# This doesn't do anything to the user (yet)...
+# This doesn't do anything to the O365 user
 if ($plans.get_item($targetServicePlan) -eq "Success") 
 {
-    write-verbose "Setting value for service plan $targetServicePlan to `"Disabled`" in hash table"
+    write-verbose "Changing value for service plan $targetServicePlan to `"Disabled`" in local service plan table"
     $plans.set_item($targetServicePlan,"Disabled")
 }
 
 
 # Re-generate the list of disabled plans to be used with the new-MsolLicenseOptions cmdlet by going thru the hash table and
 # adding all plans which are set to "Disabled" to the $disabledPlans string
-$disabledPlans = ""
-$plans.Keys | % { if ($plans.get_item($_) -eq "Disabled") { $disabledPlans += ($_ + ",") } }
-
-# lop off the trailing comma
-$disabledPlans = $disabledPlans.trimEnd(',')
+$disabledPlans = @()
+$plans.Keys | % { if ($plans.get_item($_) -eq "Disabled") { $disabledPlans += $_ } }
 
 if ($disabledPlans) {
     write-verbose "Creating new msolLicenseOptions object for $userPrincipalName"
@@ -97,7 +94,18 @@ if ($disabledPlans) {
 }
 
 # Update the user's license to reflect the new set of enabled/disabled services
-get-msoluser -userprincipalname $userPrincipalName | set-msoluserLicense -LicenseOptions $licenseOptions
+get-msoluser -UserPrincipalName $userObject.userprincipalname | Set-MsolUserLicense -LicenseOptions $licenseOptions
 
-write-host "Updated license services for $userPrincipalName ($baseLicense)" -fore Green
+# write-host "Updated service plans for $userPrincipalName ($baseLicense)" -fore Green
+
+# Verify that the provisioningStatus on the target service plan is no longer "Disabled".
+# Note that the status could be something like "PendingInput"
+
+if (((get-msoluser -UserPrincipalName $userPrincipalName).licenses.servicestatus | where { $_.serviceplan.servicename.equals($targetServicePlan) }).provisioningstatus -eq "Disabled" )
+{
+    write-host "$targetServicePlan has been disabled for $userprincipalname." -ForegroundColor Green
+} else {
+    write-warning "$targetServicePlan is not disabled for $userPrincipalName!  Something went wrong?"
+}
+
 # Done.
