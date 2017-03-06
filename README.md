@@ -2,6 +2,8 @@
 Powershell scripts that deal with managing license for users in Office365
 ## enable-O365ServicePlan.ps1 and disable-O365ServicePlan.ps1
 These scripts demonstrate changing the status of a single service plan within a user's license in Office365.
+
+IMPORTANT:  Removing service plans from users can result in data loss.  Be careful!
 ###Assumptions
 These scripts assume that the user has already authenticated using connect-msolservice.
 ###Parameters
